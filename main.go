@@ -1,9 +1,12 @@
 package main
 
 import (
-	"fmt"
+	"net/http"
 )
 
 func main() {
-	fmt.Println("Hello, World!")
+	multiplexer := http.NewServeMux()
+	server := http.Server{Handler:multiplexer, Addr:":8080"}
+
+	server.ListenAndServe()
 }
