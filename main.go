@@ -1,21 +1,39 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"strings"
 	"sync/atomic"
+
+	"github.com/joho/godotenv"
+	_ "github.com/lib/pq"
+	mydb "github.com/oliver-rupprecht/goserveit/internal/database"
 )
 
 func main() {
 	multiplexer := http.NewServeMux()
+	godotenv.Load()
+	dbURL := os.Getenv("DB_URL")
+
+	db, err := sql.Open("postgres", dbURL)
+	if err != nil {
+		os.Exit(1)
+	}
 
 	server := http.Server{
 		Handler: multiplexer, Addr:":8080",
 	}
 
+	dbq := mydb.New(db)
+
 	apiCfg := apiConfig{
 		fileserverHits: atomic.Int32{},
+		dbQueries: dbq,
+
 	}
 
 	handler := &metricsHandler{
@@ -58,8 +76,8 @@ func main() {
 		}
 
 		body := struct {
-			Valid bool `json:"valid"`
-		}{true}
+			CleandedBody string `json:"cleaned_body"`
+		}{censor(reqParam.Body)}
 
 		data, _ := json.Marshal(body)
 		rw.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -108,7 +126,9 @@ func (h *metricsHandler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 type apiConfig struct {
 	fileserverHits atomic.Int32
+	dbQueries *mydb.Queries 
 }
+
 
 func (cfg *apiConfig) numRequests() int32 {
 		return cfg.fileserverHits.Load()
@@ -118,4 +138,25 @@ func (cfg *apiConfig) resetRequests() {
 		cfg.fileserverHits.Store(0)
 }
 
+func censor(s string) string {
+	o := make([]string, 0)
+
+	for _, w := range strings.Split(s, " ") {
+		lower := strings.ToLower(w)
+		if string(lower[len(w)-1]) == "!" {
+			o = append(o, w)
+			continue
+		} 
+
+		switch lower {
+		case "kerfuffle": o = append(o, "****") 
+		case "sharbert": o = append(o, "****") 
+		case "fornax": o = append(o, "****") 
+		default:  
+			o = append(o, w)
+		}
+	}
+
+	return strings.Join(o, " ")
+}
 
