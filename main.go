@@ -1,9 +1,10 @@
 package main
 
 import (
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"sync/atomic"
-	"fmt"
 )
 
 func main() {
@@ -24,32 +25,76 @@ func main() {
 
 	multiplexer.Handle("/app/", http.StripPrefix("/app", handler))
 
-	multiplexer.HandleFunc("GET /api/metrics", func(rw http.ResponseWriter, req *http.Request) {
-		rw.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		rw.WriteHeader(http.StatusOK)
+	multiplexer.HandleFunc("/api/validate_chirp", func(rw http.ResponseWriter, req *http.Request) {
+		reqParam := struct{ 
+			Body string `json:"body"`
+		}{}
 
-	    fmt.Fprintf(rw, "Hits: %d", apiCfg.numRequests())
+		d := json.NewDecoder(req.Body)
+		if err := d.Decode(&reqParam); err != nil {
+			body := struct {
+				Error string `json:"error"`
+			}{"Couldnt decode request body"}
+
+			data, _ := json.Marshal(body)
+			rw.Header().Set("Content-Type", "text/html; charset=utf-8")
+			rw.WriteHeader(400)
+
+			rw.Write(data)
+			return
+		}
+
+		if len(reqParam.Body) > 140 {
+			body := struct {
+				Error string `json:"error"`
+			}{"Chirp is too long"}
+
+			data, _ := json.Marshal(body)
+			rw.Header().Set("Content-Type", "text/html; charset=utf-8")
+			rw.WriteHeader(400)
+
+			rw.Write(data)
+			return
+		}
+
+		body := struct {
+			Valid bool `json:"valid"`
+		}{true}
+
+		data, _ := json.Marshal(body)
+		rw.Header().Set("Content-Type", "text/html; charset=utf-8")
+
+		rw.Write(data)
 	})
 
-	multiplexer.HandleFunc("POST /api/reset", func(rw http.ResponseWriter, req *http.Request) {
-		rw.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	multiplexer.HandleFunc("GET /admin/metrics", func(rw http.ResponseWriter, req *http.Request) {
+		rw.Header().Set("Content-Type", "text/html; charset=utf-8")
 		rw.WriteHeader(http.StatusOK)
 
-		apiCfg.resetRequests()
-		fmt.Println("reset")
+		html := "<html><body><h1>Welcome, Chirpy Admin</h1><p>Chirpy has been visited %d times!</p></body></html>"
+
+	    fmt.Fprintf(rw, html, apiCfg.numRequests())
+	})
+
+	multiplexer.HandleFunc("GET /admin/healthz", func(rw http.ResponseWriter, req *http.Request) {
+		rw.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		rw.WriteHeader(http.StatusOK)
 
 		rw.Write([]byte("OK"))
 	})
 
-	multiplexer.HandleFunc("GET /api/healthz", func(rw http.ResponseWriter, req *http.Request) {
+	multiplexer.HandleFunc("POST /admin/reset", func(rw http.ResponseWriter, req *http.Request) {
 		rw.Header().Set("Content-Type", "text/plain; charset=utf-8")
-
 		rw.WriteHeader(http.StatusOK)
+
+		apiCfg.resetRequests()
+
 		rw.Write([]byte("OK"))
 	})
 
 	server.ListenAndServe()
 }
+
 
 type metricsHandler struct {
 	cfg *apiConfig
@@ -63,15 +108,6 @@ func (h *metricsHandler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 type apiConfig struct {
 	fileserverHits atomic.Int32
-}
-
-func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
-	handlerFunc := http.HandlerFunc(func(rw http.ResponseWriter, res *http.Request) {
-		cfg.fileserverHits.Add(1)
-		next.ServeHTTP(rw, res)
-	})
-
-	return handlerFunc
 }
 
 func (cfg *apiConfig) numRequests() int32 {
