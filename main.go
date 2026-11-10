@@ -24,14 +24,14 @@ func main() {
 
 	multiplexer.Handle("/app/", http.StripPrefix("/app", handler))
 
-	multiplexer.HandleFunc("/metrics", func(rw http.ResponseWriter, req *http.Request) {
+	multiplexer.HandleFunc("GET /api/metrics", func(rw http.ResponseWriter, req *http.Request) {
 		rw.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		rw.WriteHeader(http.StatusOK)
 
 	    fmt.Fprintf(rw, "Hits: %d", apiCfg.numRequests())
 	})
 
-	multiplexer.HandleFunc("/reset", func(rw http.ResponseWriter, req *http.Request) {
+	multiplexer.HandleFunc("POST /api/reset", func(rw http.ResponseWriter, req *http.Request) {
 		rw.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		rw.WriteHeader(http.StatusOK)
 
@@ -41,7 +41,7 @@ func main() {
 		rw.Write([]byte("OK"))
 	})
 
-	multiplexer.HandleFunc("/healthz", func(rw http.ResponseWriter, req *http.Request) {
+	multiplexer.HandleFunc("GET /api/healthz", func(rw http.ResponseWriter, req *http.Request) {
 		rw.Header().Set("Content-Type", "text/plain; charset=utf-8")
 
 		rw.WriteHeader(http.StatusOK)
