@@ -46,6 +46,70 @@ func main() {
 
 	multiplexer.Handle("/app/", http.StripPrefix("/app", handler))
 
+    multiplexer.HandleFunc("GET /api/chirps/{chirpID}", func(rw http.ResponseWriter, r *http.Request) {
+		id, err := uuid.Parse(r.PathValue("chirpID"))
+		if err != nil {
+			marshalAndSendError(rw, http.StatusInternalServerError, "failed to parse UUID")
+			return
+		} 
+
+		dbObj, err := apiCfg.dbQueries.SearchChirps(r.Context(), id)
+		if err != nil {
+			marshalAndSendError(rw, http.StatusNotFound, "no chirp of that nature here friend")
+			return
+		}
+
+        data, err := json.Marshal(
+			jsonChirp{dbObj.ID, dbObj.CreatedAt, dbObj.UpdatedAt, dbObj.Body, dbObj.UserID.UUID},
+		)
+        if err != nil {
+            marshalAndSendError(rw, http.StatusInternalServerError, "couldnt marshal")
+			return
+        }
+
+		rw.Header().Set("Content-Type", "text/json; charset=utf-8")
+		rw.WriteHeader(http.StatusOK)
+
+		rw.Write(data)
+
+
+    })
+
+	multiplexer.HandleFunc("GET /api/chirps", func(rw http.ResponseWriter, r *http.Request) {
+        chirps, err := apiCfg.dbQueries.SelectAllChirpsAsc(r.Context())	
+        if err != nil {
+            marshalAndSendError(rw, http.StatusInternalServerError, "failed to fetch chirps")
+        }
+
+        
+        var typedChirps []jsonChirp
+        for _, ch := range chirps {
+            typedChirp := jsonChirp{
+                Id: ch.ID,
+                CreatedAt: ch.CreatedAt,
+                UpdatedAt: ch.UpdatedAt, 
+                Body: ch.Body,
+                UserId: ch.UserID.UUID, 
+            }
+
+            typedChirps = append(typedChirps, typedChirp)
+        }
+
+
+        data, err := json.Marshal(typedChirps)
+        if err != nil {
+            marshalAndSendError(rw, http.StatusInternalServerError, "couldnt marshal")
+        }
+
+		rw.Header().Set("Content-Type", "text/json; charset=utf-8")
+		rw.WriteHeader(http.StatusOK)
+
+		rw.Write(data)
+
+    })
+
+
+
 	multiplexer.HandleFunc("POST /api/chirps", func(rw http.ResponseWriter, r *http.Request) {
 		chirp := Chirp{}
 		if err := json.NewDecoder(r.Body).Decode(&chirp); err != nil {
@@ -265,4 +329,11 @@ func censorText(s string) string {
 	return strings.Join(o, " ")
 }
 
+type jsonChirp struct {
+    Id uuid.UUID `json:"id"`
+    CreatedAt time.Time `json:"created_at"`
+    UpdatedAt time.Time `json:"updated_at"`
+    Body string `json:"body"`
+    UserId uuid.UUID `json:"user_id"`
+}
 
