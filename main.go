@@ -2,14 +2,14 @@ package main
 
 import (
 	"database/sql"
-	"uuid"
-	"time"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
 	"strings"
 	"sync/atomic"
+	"time"
+	"github.com/google/uuid"
 
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
@@ -46,44 +46,49 @@ func main() {
 
 	multiplexer.Handle("/app/", http.StripPrefix("/app", handler))
 
-	multiplexer.HandleFunc("/api/validate_chirp", func(rw http.ResponseWriter, req *http.Request) {
-		reqParam := struct{ 
-			Body string `json:"body"`
-		}{}
-
-		d := json.NewDecoder(req.Body)
-		if err := d.Decode(&reqParam); err != nil {
-			body := struct {
-				Error string `json:"error"`
-			}{"Couldnt decode request body"}
-
-			data, _ := json.Marshal(body)
-			rw.Header().Set("Content-Type", "text/html; charset=utf-8")
-			rw.WriteHeader(400)
-
-			rw.Write(data)
+	multiplexer.HandleFunc("POST /api/chirps", func(rw http.ResponseWriter, r *http.Request) {
+		chirp := Chirp{}
+		if err := json.NewDecoder(r.Body).Decode(&chirp); err != nil {
+        	marshalAndSendError(rw, http.StatusBadRequest, "couldn't decode request body")
 			return
 		}
 
-		if len(reqParam.Body) > 140 {
-			body := struct {
-				Error string `json:"error"`
-			}{"Chirp is too long"}
+		if len(chirp.Body) > 140 {
+            marshalAndSendError(rw, http.StatusBadRequest, "chirp length exceeded")
+            return
+		}
 
-			data, _ := json.Marshal(body)
-			rw.Header().Set("Content-Type", "text/html; charset=utf-8")
-			rw.WriteHeader(400)
+        censored := censorText(chirp.Body)
+		transObj := mydb.SaveChirpParams {
+			Body: censored,
+			UserID: uuid.NullUUID {
+                UUID: chirp.UserId, 
+                Valid: true, 
+			},
+		}
 
-			rw.Write(data)
+		savedChrip, err := apiCfg.dbQueries.SaveChirp(r.Context(), transObj)
+		if err != nil {
+			marshalAndSendError(rw, http.StatusInternalServerError, fmt.Sprintf("%s", err))
 			return
 		}
 
-		body := struct {
-			CleanedBody string `json:"cleaned_body"`
-		}{censor(reqParam.Body)}
-
-		data, _ := json.Marshal(body)
-		rw.Header().Set("Content-Type", "text/html; charset=utf-8")
+		data, err := json.Marshal(
+			struct {
+				Id uuid.UUID `json:"id"`
+				CreatedAt time.Time `json:"created_at"`
+				UpdatedAt time.Time `json:"updated_at"`
+				Body string `json:"body"`
+				UserId uuid.UUID `json:"user_id"`
+			}{savedChrip.ID, savedChrip.CreatedAt, savedChrip.UpdatedAt, savedChrip.Body, savedChrip.UserID.UUID},
+		)
+		if err != nil {
+			marshalAndSendError(rw, http.StatusInternalServerError, fmt.Sprintf("%s", err))
+			return
+		}
+        
+		rw.Header().Set("Content-Type", "text/json; charset=utf-8")
+		rw.WriteHeader(http.StatusCreated)
 
 		rw.Write(data)
 	})
@@ -209,7 +214,36 @@ func (cfg *apiConfig) resetRequests() {
 		cfg.fileserverHits.Store(0)
 }
 
-func censor(s string) string {
+type User struct {
+	ID        uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Email     string    `json:"email"`
+}
+
+type ErrorJson struct {
+	Body string `json:"error"`
+}
+
+type Chirp struct {
+	Body string `json:"body"`
+	UserId uuid.UUID `json:"user_id"`
+}
+
+func marshalAndSendError(rw http.ResponseWriter, status int, errorS string) {
+    bytes, _ := json.Marshal(
+        ErrorJson{Body:errorS},
+    )
+
+    rw.Header().Set(
+        "Content-Type", "text/html; charset=utf-8",
+    )
+
+    rw.WriteHeader(status)
+	rw.Write(bytes)
+}
+
+func censorText(s string) string {
 	o := make([]string, 0)
 
 	for _, w := range strings.Split(s, " ") {
@@ -231,9 +265,4 @@ func censor(s string) string {
 	return strings.Join(o, " ")
 }
 
-type User struct {
-	ID        uuid.UUID `json:"id"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-	Email     string    `json:"email"`
-}
+
